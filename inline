@@ -1,0 +1,167 @@
+
+- hosts: localhost
+  become: yes
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+    aws_access_key: ""
+    aws_secret_key: ""
+  tasks:
+    - name: Create VPC
+      ec2_vpc_net:
+        aws_access_key: ""
+        aws_secret_key: ""
+        cidr_block: "10.0.0.0/16"
+        name: "pavan-vpc"
+        region: "us-east-1"
+        state: present
+      register: vpc_result
+
+    - name: Create Internet Gateway
+      ec2_vpc_igw:
+        aws_access_key: ""
+        aws_secret_key: ""
+        vpc_id: "{{ vpc_result.vpc.id }}"
+        region: "us-east-1"
+        state: present
+        tags:
+          Name: "pavan-igw"
+      register: igw_result
+
+    - name: Create Public Subnet
+      ec2_vpc_subnet:
+        aws_access_key: ""
+        aws_secret_key: ""
+        vpc_id: "{{ vpc_result.vpc.id }}"
+        region: "us-east-1"
+        az: "us-east-1a"
+        state: present
+        cidr: "10.0.0.0/20"
+        map_public: yes
+        resource_tags:
+          Name: "pavan-pub"
+      register: pubsubnet_result
+
+    - name: Create Private Subnet
+      ec2_vpc_subnet:
+        aws_access_key: ""
+        aws_secret_key: ""
+        vpc_id: "{{ vpc_result.vpc.id }}"
+        region: "us-east-1"
+        az: "us-east-1a"
+        state: present
+        cidr: "10.0.16.0/20"
+        map_public: no
+        resource_tags:
+          Name: "pavan-pvt"
+      register: pvtsubnet_result
+
+    - name: Create Public Route Table
+      ec2_vpc_route_table:
+        aws_access_key: ""
+        aws_secret_key: ""
+        vpc_id: "{{ vpc_result.vpc.id }}"
+        region: "us-east-1"
+        state: present
+        tags:
+          Name: "pavan-pub-rt"
+        subnets: ["{{ pubsubnet_result.subnet.id }}"]
+        routes:
+          - dest: "0.0.0.0/0"
+            gateway_id: "{{ igw_result.gateway_id }}"
+      register: public_route_table
+
+    - name: Create Private Route Table
+      ec2_vpc_route_table:
+        aws_access_key: ""
+        aws_secret_key: ""
+        vpc_id: "{{ vpc_result.vpc.id }}"
+        region: "us-east-1"
+        state: present
+        tags:
+          Name: "pavan-pvt-rt"
+        subnets: ["{{ pvtsubnet_result.subnet.id }}"]
+      register: private_route_table
+
+    - name: Create Security Group
+      ec2_group:
+        aws_access_key: ""
+        aws_secret_key: ""
+        vpc_id: "{{ vpc_result.vpc.id }}"
+        region: "us-east-1"
+        state: present
+        name: "pavan-sg"
+        description: "allow"
+        tags:
+          Name: "pavan-sg"
+        rules:
+          - proto: tcp
+            ports:
+              - 80
+            cidr_ip: "0.0.0.0/0"
+            rule_desc: "Allow HTTP traffic"
+          # Add more rules as necessary for your application
+      register: security_group_results
+
+    - name: Launch EC2 instance
+      ec2:
+        aws_access_key: ""
+        aws_secret_key: ""
+        image: "ami-0a699202e5027c10d"
+        instance_type: "t2.micro"
+        region: "us-east-1"
+        wait: yes
+        count: 1
+        state: present
+        vpc_subnet_id: "{{ pubsubnet_result.subnet.id }}"
+        assign_public_ip: yes
+        group_id: "{{ security_group_results.group_id }}"
+        instance_tags:
+          Name: "pavan-Ec"
+        user_data: |
+          #!/bin/bash
+          sudo yum -y install git httpd
+          sudo systemctl start httpd
+          sudo systemctl enable httpd
+          sudo git clone https://github.com/PavanGitPro/foodapplication.git/ /var/www/html/
+
+    - name: Create Load Balancer
+      ec2_elb_lb:
+        aws_access_key: ""
+        aws_secret_key: ""
+        region: "us-east-1"
+        name: "pavan-lb"
+        state: present
+        listeners:
+          - protocol: HTTP
+            load_balancer_port: 80
+            instance_protocol: HTTP
+            instance_port: 80
+        security_group_ids: "{{ security_group_results.group_id }}"
+        subnets:
+          - "{{ pubsubnet_result.subnet.id }}"
+
+    - name: Create Launch Configuration
+      ec2_lc:
+        aws_access_key: ""
+        aws_secret_key: ""
+        region: "us-east-1"
+        name: "pavan-lc"
+        image_id: "ami-0a699202e5027c10d"
+        instance_type: "t2.micro"
+        key_name: "ansible"
+        security_groups: ["pavan-sg"]
+        state: present
+
+    - name: Create Auto Scaling Group
+      ec2_asg:
+        aws_access_key: ""
+        aws_secret_key: ""
+        region: "us-east-1"
+        name: "pavan-asg"
+        launch_config_name: "pavan-lc"
+        min_size: 1
+        max_size: 3
+        desired_capacity: 2
+        vpc_zone_identifier: "{{ pubsubnet_result.subnet.id }}"
+        load_balancers:
+          - "pavan-lb"
