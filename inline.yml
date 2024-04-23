@@ -122,7 +122,7 @@
           sudo yum -y install git httpd
           sudo systemctl start httpd
           sudo systemctl enable httpd
-          sudo git clone https://github.com/PavanGitPro/foodapplication.git/ /var/www/html/
+          sudo git clone https://github.com/PavanGitPro/ecomm.git /var/www/html/
 
     - name: Create Load Balancer
       ec2_elb_lb:
